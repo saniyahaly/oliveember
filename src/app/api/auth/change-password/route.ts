@@ -1,170 +1,117 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import {
-  getActiveSessionId,
+  allowLoginAttempt,
+  createSession,
+  revokeSession,
   SESSION_COOKIE,
   sessionCookieOptions,
 } from "@/lib/auth";
-import { getDatabase } from "@/lib/db";
-import { hashPassword, verifyPassword } from "@/lib/password";
+
 import { isCrossOrigin, readJsonObject } from "@/lib/request";
 
 export const runtime = "nodejs";
 
-function strongPassword(password: string): boolean {
-  return (
-    password.length >= 8 &&
-    password.length <= 128 &&
-    /[A-Z]/.test(password) &&
-    /[a-z]/.test(password) &&
-    /[0-9]/.test(password) &&
-    /[^A-Za-z0-9]/.test(password)
-  );
-}
+function secureCompare(a: string, b: string) {
+  const hashA = createHash("sha256").update(a).digest();
+  const hashB = createHash("sha256").update(b).digest();
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json(
-    { success: false, error: message },
-    { status }
-  );
+  return timingSafeEqual(hashA, hashB);
 }
 
 export async function POST(request: NextRequest) {
   if (isCrossOrigin(request)) {
-    return errorResponse("Invalid request origin", 403);
+    return NextResponse.json(
+      { error: "Invalid request origin" },
+      { status: 403 }
+    );
+  }
+
+  const body = await readJsonObject(request);
+
+  if (
+    !body ||
+    typeof body.username !== "string" ||
+    typeof body.password !== "string" ||
+    !body.username.trim() ||
+    !body.password ||
+    body.username.length > 1024 ||
+    body.password.length > 1024
+  ) {
+    return NextResponse.json(
+      { error: "Enter a valid username and password" },
+      { status: 400 }
+    );
   }
 
   try {
-    const sessionId = await getActiveSessionId();
+    const adminUsername = process.env.ADMIN_USERNAME;
+    const adminPassword = process.env.ADMIN_PASSWORD;
 
-    if (!sessionId) {
-      return errorResponse("Administrator login required", 401);
-    }
+    if (!adminUsername || !adminPassword) {
+      console.error("Admin environment credentials are missing.");
 
-    const body = await readJsonObject(request);
-
-    if (
-      !body ||
-      typeof body.currentPassword !== "string" ||
-      typeof body.newPassword !== "string" ||
-      typeof body.confirmPassword !== "string"
-    ) {
-      return errorResponse("Enter all password fields", 400);
-    }
-
-    const {
-      currentPassword,
-      newPassword,
-      confirmPassword,
-    } = body;
-
-    if (
-      !currentPassword ||
-      currentPassword.length > 128 ||
-      !strongPassword(newPassword)
-    ) {
-      return errorResponse(
-        "New password must contain 8–128 characters, " +
-        "including uppercase, lowercase, number and special character.",
-        400
+      return NextResponse.json(
+        { error: "Admin login is not configured" },
+        { status: 500 }
       );
     }
 
-    if (newPassword !== confirmPassword) {
-      return errorResponse("New passwords do not match", 400);
+    if (!(await allowLoginAttempt())) {
+      return NextResponse.json(
+        {
+          error: "Too many login attempts. Try again in a minute.",
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": "60" },
+        }
+      );
     }
 
-    const sql = getDatabase();
-
-    const rows = await sql`
-      SELECT password_hash
-      FROM public.admin_credentials
-      WHERE id = 1
-      LIMIT 1
-    `;
-
-    if (rows.length !== 1) {
-      return errorResponse("Administrator account not found", 404);
-    }
-
-    const oldHash = String(rows[0].password_hash);
-
-    const validCurrentPassword = await verifyPassword(
-      currentPassword,
-      oldHash
+    const validUsername = secureCompare(
+      body.username.trim().toLowerCase(),
+      adminUsername.trim().toLowerCase()
     );
 
-    if (!validCurrentPassword) {
-      return errorResponse("Current password is incorrect", 400);
-    }
-
-    const samePassword = await verifyPassword(
-      newPassword,
-      oldHash
+    const validPassword = secureCompare(
+      body.password,
+      adminPassword
     );
 
-    if (samePassword) {
-      return errorResponse(
-        "New password must be different from the current password",
-        400
+    if (!validUsername || !validPassword) {
+      return NextResponse.json(
+        { error: "Invalid username or password" },
+        { status: 401 }
       );
     }
 
-    const newHash = await hashPassword(newPassword);
+    await revokeSession(
+      request.cookies.get(SESSION_COOKIE)?.value
+    );
 
-    // Update the password and revoke all admin sessions
-    // together in one database statement.
-    const result = await sql`
-      WITH changed AS (
-        UPDATE public.admin_credentials
-        SET
-          password_hash = ${newHash},
-          updated_at = NOW()
-        WHERE id = 1
-          AND password_hash = ${oldHash}
-          AND EXISTS (
-            SELECT 1
-            FROM public.admin_sessions
-            WHERE id = ${sessionId}
-              AND expires_at > NOW()
-            FOR KEY SHARE
-          )
-        RETURNING id
-      ),
-      invalidated AS (
-        DELETE FROM public.admin_sessions
-        WHERE EXISTS (SELECT 1 FROM changed)
-        RETURNING id
-      )
-      SELECT
-        (SELECT COUNT(*) FROM changed)::int AS changed_count,
-        (SELECT COUNT(*) FROM invalidated)::int AS invalidated_count
-    `;
-
-    if (Number(result[0]?.changed_count) !== 1) {
-      return errorResponse(
-        "Your session or password has changed. Please log in again.",
-        409
-      );
-    }
+    const token = await createSession();
 
     const response = NextResponse.json({
       success: true,
-      message: "Password changed. Please log in again.",
+      message: "Admin login successful",
     });
 
-    response.cookies.set(SESSION_COOKIE, "", {
-      ...sessionCookieOptions,
-      maxAge: 0,
-    });
+    response.cookies.set(
+      SESSION_COOKIE,
+      token,
+      sessionCookieOptions
+    );
 
     return response;
   } catch (error) {
-    console.error("Admin password change failed:", error);
+    console.error("Admin login failed:", error);
 
-    return errorResponse(
-      "Unable to change password. Please try again.",
-      500
+    return NextResponse.json(
+      { error: "Login failed. Please try again." },
+      { status: 500 }
     );
   }
 }
