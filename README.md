@@ -1,309 +1,69 @@
+# Olive & Ember
 
-# Olive & Ember — Restaurant Menu Management Website
+Olive & Ember is a restaurant website built with Next.js App Router, React, TypeScript, Tailwind CSS, and Neon PostgreSQL. Visitors can browse the menu without signing in. The navbar opens the admin login in a separate tab, and signed-in admins can add, edit, and delete dishes at `/admin`.
 
-Olive & Ember is a responsive, database-powered restaurant
-website built using Next.js, React, TypeScript, Tailwind CSS,
-and NeonDB PostgreSQL.
+## Local setup
 
-The website displays restaurant menu items dynamically from
-the database. Users can add, edit, and delete dishes through
-a simple interface. All changes are saved permanently in
-NeonDB and remain available after refreshing the page.
+1. Run `npm ci` from the project root.
+2. Configure these server-side variables in your private `.env.local`.
 
-This project was developed as part of a classroom assignment
-to demonstrate database integration, React state management,
-API route handlers, and SQL operations.
+   | Variable | Purpose |
+   | --- | --- |
+   | `DATABASE_URL` | Neon PostgreSQL connection string |
+   | `ADMIN_USERNAME` | Admin sign-in username |
+   | `ADMIN_PASSWORD` | Admin sign-in password |
+   | `SESSION_SECRET` | Cookie signing secret, at least 32 characters |
 
-## Live Website
+3. For a new database, create the menu table if it is missing.
 
-https://oliveamber.vercel.app
+   ```sql
+   CREATE TABLE IF NOT EXISTS menu_items (
+       id SERIAL PRIMARY KEY,
+       name VARCHAR(150) NOT NULL,
+       price NUMERIC(10,2) NOT NULL CHECK (price >= 0),
+       description TEXT NOT NULL
+   );
+   ```
 
-## Features
+4. Apply [the auth migration](sql/001_admin_auth.sql) on the same database and schema the app uses. It creates two auth tables and an expiry index while preserving `menu_items` and its records.
+5. Run `npm run dev` and open `http://localhost:3000`.
 
-- Dynamic restaurant menu loaded from NeonDB
-- Add new menu items with name, price, and description
-- Edit existing menu items
-- Delete menu items with a confirmation dialog
-- Persistent database storage after page refresh
-- Responsive user interface using Tailwind CSS
-- Loading, success, and error messages
-- REST-style API routes for CRUD operations
+## Menu and authentication
 
-## Technologies Used
+| Route | Behavior |
+| --- | --- |
+| `/` | Public, read-only restaurant menu |
+| `/admin/login` | Admin sign-in with a Show/Hide password control |
+| `/admin` | Protected dashboard with menu forms and logout |
+| `GET /api/menu` | Public menu read |
+| `POST /api/menu`, `PUT /api/menu`, `DELETE /api/menu` | Session-protected menu writes. Missing, expired, or revoked sessions receive JSON `401`; cross-origin requests receive `403`. |
+| `POST /api/auth/login` | Checks environment credentials and applies the shared Neon-backed login limit |
+| `POST /api/auth/logout` | Revokes the active database session and clears its browser cookie |
 
-| Technology | Purpose |
-|------------|---------|
-| Next.js App Router | Application framework |
-| React | User interface and state management |
-| TypeScript | Type-safe application code |
-| Tailwind CSS | Responsive website styling |
-| NeonDB PostgreSQL | Database storage |
-| Neon Serverless Driver | Database connection |
-| Vercel | Website deployment |
+Sessions use signed HTTP-only cookies, expire after eight hours, and are verified against Neon by the dashboard and menu write handlers. Cookies are SameSite Strict and Secure in production. The login limit allows 10 well-formed attempts per minute across app instances.
 
-## Project Structure
-
-```text
-oliveamber/
-├── public/
-├── src/
-│   ├── app/
-│   │   ├── api/
-│   │   │   └── menu/
-│   │   │       └── route.ts
-│   │   ├── globals.css
-│   │   ├── layout.tsx
-│   │   └── page.tsx
-│   └── lib/
-│       └── db.ts
-├── .env.local
-├── .gitignore
-├── package.json
-└── README.md
-```
-
-Note: `.env.local` is a private local file and must not be
-committed to GitHub.
-
-## Database Setup
-
-The project uses NeonDB PostgreSQL to store restaurant menu
-items.
-
-### Step 1: Create a NeonDB Project
-
-1. Visit https://console.neon.tech
-2. Sign in or create a free account.
-3. Create a new PostgreSQL project.
-4. Open the SQL Editor.
-5. Run the SQL code below.
-
-### Step 2: Create the Menu Table
-
-```sql
-CREATE TABLE IF NOT EXISTS menu_items (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
-    price NUMERIC(10,2) NOT NULL CHECK (price >= 0),
-    description TEXT NOT NULL
-);
-```
-
-### Database Fields
-
-| Field | Data Type | Description |
-|-------|-----------|-------------|
-| id | SERIAL | Unique menu item identifier |
-| name | VARCHAR(150) | Dish name |
-| price | NUMERIC(10,2) | Dish price |
-| description | TEXT | Dish description |
-
-### Step 3: Insert Sample Data
-
-```sql
-INSERT INTO menu_items (name, price, description)
-VALUES
-('Classic Beef Burger', 1499,
- 'Juicy beef patty with cheddar cheese and special sauce.'),
-('Chicken Alfredo Pasta', 1699,
- 'Creamy pasta with grilled chicken and parmesan.'),
-('Margherita Pizza', 1799,
- 'Fresh mozzarella, basil and tomato sauce.'),
-('Grilled Chicken Steak', 2299,
- 'Grilled chicken served with vegetables and mashed potatoes.'),
-('Chocolate Lava Cake', 899,
- 'Warm chocolate cake with a rich molten center.');
-```
-
-To verify the records:
-
-```sql
-SELECT * FROM menu_items;
-```
-
-## Installation and Setup
-
-### Requirements
-
-- Node.js and npm
-- A NeonDB PostgreSQL database
-- VS Code or another code editor
-
-### Step 1: Clone the Repository
+## Checks and deployment prerequisites
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
-cd YOUR_REPOSITORY
+npx tsc --noEmit
+npm run lint
+npm run build
 ```
 
-Replace the placeholder with your GitHub repository URL.
+A fresh checkout may need Next.js to generate route types before the standalone TypeScript check. The production build also checks types.
 
-### Step 2: Install Dependencies
+- Confirm the Vercel project is linked to the intended GitHub repository and its Production Branch points to the intended branch. Local `main` tracks `origin/main`. Vercel's branch selection must be checked separately.
+- Configure all four variables in Vercel's Production environment. Use the Neon connection for the intended database and branch, and verify that the auth migration is present there.
+- Verify that the intended deployment commit includes the auth routes, dashboard, helpers, and migration. Keep environment files and credential values out of Git.
+- After an authorized deployment, verify public reads, guest rejection, admin sign-in, disposable CRUD and refresh, and logout. Use a test database for write checks where available.
 
-```bash
-npm install
-```
-
-### Step 3: Configure Environment Variables
-
-Create a file named `.env.local` in the root directory.
-
-Add:
-
-```env
-DATABASE_URL="YOUR_NEON_DATABASE_CONNECTION_STRING"
-```
-
-Replace the placeholder with your actual NeonDB connection
-string.
-
-Never commit `.env.local` to GitHub.
-
-### Step 4: Run the Development Server
-
-```bash
-npm run dev
-```
-
-Open the application at:
-
-http://localhost:3000
-
-## API Routes
-
-The application uses Next.js API route handlers in:
-
-`src/app/api/menu/route.ts`
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | /api/menu | Fetch all menu items |
-| POST | /api/menu | Add a menu item |
-| PUT | /api/menu | Update a menu item |
-| DELETE | /api/menu | Delete a menu item |
-
-### GET — Fetch Menu Items
-
-Retrieves all menu items from NeonDB and displays them
-on the restaurant homepage.
-
-### POST — Add a Menu Item
-
-Accepts a dish name, price, and description, then
-inserts the new record into NeonDB.
-
-### PUT — Edit a Menu Item
-
-Updates an existing menu item using its unique ID.
-
-### DELETE — Remove a Menu Item
-
-Deletes an existing menu item using its unique ID.
-
-## CRUD Functionality
-
-| Operation | Feature | Database Query |
-|-----------|---------|----------------|
-| Create | Add a new dish | INSERT |
-| Read | View menu items | SELECT |
-| Update | Edit an existing dish | UPDATE |
-| Delete | Remove a dish | DELETE |
-
-React `useState` manages form values, menu records,
-loading states, and user feedback.
-
-React `useEffect` loads menu records when the homepage
-is opened.
-
-The `fetch()` API communicates with the Next.js backend.
+For local verification results and outstanding deployment checks, see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 
 ## Screenshots
 
-Screenshots demonstrating the working application
-are stored in the `screenshots` directory.
+The repository includes classroom screenshots of the earlier menu-management UI.
 
-### 1. Restaurant Homepage
-
-![Restaurant Homepage](screenshots/homepage.png)
-
-### 2. Dynamic Restaurant Menu
-
-![Restaurant Menu](screenshots/menu.png)
-
-### 3. Add Menu Item
-
-![Add Menu Item](screenshots/add-item.png)
-
-### 4. Edit Menu Item
-
-![Edit Menu Item](screenshots/edit-item.png)
-
-### 5. Delete Menu Item
-
-![Delete Menu Item](screenshots/delete-item.png)
-
-## Testing
-
-The application should pass the following tests:
-
-1. Start the Next.js development server.
-2. Open the restaurant homepage.
-3. Confirm that menu items load from NeonDB.
-4. Add a new menu item using the form.
-5. Refresh the page and confirm the item remains.
-6. Edit the new menu item.
-7. Refresh the page and verify the updated values.
-8. Delete the menu item.
-9. Refresh again and confirm it remains deleted.
-10. Verify the changes in the NeonDB SQL Editor.
-
-## Deployment
-
-The application is deployed using Vercel.
-
-To deploy:
-
-1. Push the project to GitHub.
-2. Import the repository into Vercel.
-3. Add `DATABASE_URL` under Project Settings
-   > Environment Variables.
-4. Deploy or redeploy the application.
-5. Open the live website and test the menu operations.
-
-## Security Note
-
-Database credentials are stored in environment variables
-and are accessed only through server-side API routes.
-
-This is a classroom demonstration project.
-Authentication is not implemented, so the public API
-allows visitors to modify menu items.
-
-A production restaurant website would require
-authentication and access controls for management actions.
-
-## Assignment Requirements
-
-- [x] Next.js App Router
-- [x] React useState and useEffect
-- [x] Forms and fetch()
-- [x] API route handlers
-- [x] NeonDB PostgreSQL
-- [x] Dynamic menu items
-- [x] Add new menu items
-- [x] Delete existing menu items
-- [x] Edit existing menu items
-- [x] Database persistence after refresh
-- [x] Tailwind CSS styling
-- [ ] Add screenshots to the repository
-- [ ] Verify live deployment functionality
-
-## Conclusion
-
-Olive & Ember demonstrates how a Next.js application
-can interact with a PostgreSQL database through API
-route handlers.
-
-The project provides a responsive restaurant interface
-with complete CRUD functionality and persistent
-database storage.
+- [Menu items](screenshots/menu%20items.png)
+- [Edit form](screenshots/edit%20menu.png)
+- [Edited dish](screenshots/edited%20menu%20item.png)
+- [Delete confirmation](screenshots/delete%20menu.png)

@@ -1,197 +1,142 @@
-
 import { NextRequest, NextResponse } from "next/server";
+import { getActiveSessionId } from "@/lib/auth";
 import { getDatabase } from "@/lib/db";
+import { validateMenuImageUrl } from "@/lib/menu-image";
+import { isCrossOrigin, readJsonObject } from "@/lib/request";
 
 export const runtime = "nodejs";
 
-// GET: Read all menu items
+function validId(id: unknown): id is number {
+  return typeof id === "number" && Number.isInteger(id) && id > 0 && id <= 2147483647;
+}
+
+function readDish(body: Record<string, unknown>) {
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const description = typeof body.description === "string" ? body.description.trim() : "";
+  const { price } = body;
+
+  if (
+    !name || name.length > 150 || name.includes("\0") ||
+    !description || description.length > 5000 || description.includes("\0") ||
+    typeof price !== "number" || !Number.isFinite(price) ||
+    price < 0 || price > 99999999.99 ||
+    Number(price.toFixed(2)) !== price
+  ) {
+    return { error: "Enter valid dish details" } as const;
+  }
+
+  const { url, error } = validateMenuImageUrl(body.image_url);
+  if (error) return { error } as const;
+  const imageUrl = body.image_url === undefined ? undefined : url;
+
+  return { dish: { name, description, price, imageUrl } } as const;
+}
+
+function menuError(error: string, status: number) {
+  return NextResponse.json({ success: false, error }, { status });
+}
+
+async function writeMenu(
+  request: NextRequest,
+  write: (body: Record<string, unknown>, sessionId: string) => Promise<NextResponse>
+) {
+  if (isCrossOrigin(request)) return menuError("Invalid request origin", 403);
+
+  try {
+    const sessionId = await getActiveSessionId();
+    if (!sessionId) return menuError("Admin login required", 401);
+
+    const body = await readJsonObject(request);
+    if (!body) return menuError("Expected a valid JSON object", 400);
+
+    return await write(body, sessionId);
+  } catch {
+    console.error("Menu write failed.");
+    return menuError("Menu write failed", 500);
+  }
+}
+
 export async function GET() {
   try {
     const sql = getDatabase();
-
     const items = await sql`
-      SELECT id, name, price, description
-      FROM menu_items
-      ORDER BY id DESC
+      SELECT id, name, price, description, image_url FROM menu_items ORDER BY id DESC
     `;
-
-    return NextResponse.json({
-      success: true,
-      items,
-    });
-  } catch (error) {
-    console.error("GET error:", error);
-
-    return NextResponse.json(
-      { success: false, error: "Failed to fetch menu" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true, items });
+  } catch {
+    console.error("Menu read failed.");
+    return menuError("Failed to fetch menu", 500);
   }
 }
 
-// POST: Add a new menu item
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-
-    const name =
-      typeof body.name === "string" ? body.name.trim() : "";
-
-    const description =
-      typeof body.description === "string"
-        ? body.description.trim()
-        : "";
-
-    const price = Number(body.price);
-
-    if (
-      !name ||
-      name.length > 150 ||
-      !description ||
-      body.price === "" ||
-      body.price === null ||
-      body.price === undefined ||
-      !Number.isFinite(price) ||
-      price < 0 ||
-      !Number.isInteger(Math.round(price * 100)) ||
-      Math.abs(price * 100 - Math.round(price * 100)) > 0.000001 ||
-      price > 99999999.99
-    ) {
-      return NextResponse.json(
-        { success: false, error: "Enter valid dish details" },
-        { status: 400 }
-      );
-    }
+  return writeMenu(request, async (body, sessionId) => {
+    const result = readDish(body);
+    if (result.error !== undefined) return menuError(result.error, 400);
+    const { dish } = result;
 
     const sql = getDatabase();
-
-    const result = await sql`
-      INSERT INTO menu_items (name, price, description)
-      VALUES (${name}, ${price}, ${description})
-      RETURNING id, name, price, description
+    const [item] = await sql`
+      INSERT INTO menu_items (name, price, description, image_url)
+      SELECT ${dish.name}, ${dish.price}::numeric, ${dish.description}, ${dish.imageUrl ?? null}::text
+      FROM admin_sessions WHERE id = ${sessionId} AND expires_at > NOW()
+      FOR KEY SHARE
+      RETURNING id, name, price, description, image_url
     `;
-
-    return NextResponse.json(
-      { success: true, item: result[0] },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error("POST error:", error);
-
-    return NextResponse.json(
-      { success: false, error: "Failed to add dish" },
-      { status: 500 }
-    );
-  }
+    if (!item) return menuError("Admin login required", 401);
+    return NextResponse.json({ success: true, item }, { status: 201 });
+  });
 }
 
-// DELETE: Remove an existing menu item
-export async function DELETE(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const id = Number(body.id);
-
-    if (!Number.isSafeInteger(id) || id <= 0) {
-      return NextResponse.json(
-        { success: false, error: "Invalid item ID" },
-        { status: 400 }
-      );
-    }
+export async function PUT(request: NextRequest) {
+  return writeMenu(request, async (body, sessionId) => {
+    const { id } = body;
+    if (!validId(id)) return menuError("Invalid item ID", 400);
+    const result = readDish(body);
+    if (result.error !== undefined) return menuError(result.error, 400);
+    const { dish } = result;
 
     const sql = getDatabase();
+    const [item] = await sql`
+      UPDATE menu_items
+      SET name = ${dish.name},
+          price = ${dish.price},
+          description = ${dish.description},
+          image_url = CASE WHEN ${dish.imageUrl !== undefined}::boolean
+                           THEN ${dish.imageUrl ?? null}::text ELSE image_url END
+      WHERE id = ${id} AND EXISTS (
+        SELECT id FROM admin_sessions WHERE id = ${sessionId} AND expires_at > NOW()
+        FOR KEY SHARE
+      )
+      RETURNING id, name, price, description, image_url
+    `;
+    if (!item) {
+      return (await getActiveSessionId())
+        ? menuError("Menu item not found", 404)
+        : menuError("Admin login required", 401);
+    }
+    return NextResponse.json({ success: true, item, message: "Menu item updated successfully" });
+  });
+}
 
-    const result = await sql`
+export async function DELETE(request: NextRequest) {
+  return writeMenu(request, async ({ id }, sessionId) => {
+    if (!validId(id)) return menuError("Invalid item ID", 400);
+
+    const sql = getDatabase();
+    const [item] = await sql`
       DELETE FROM menu_items
-      WHERE id = ${id}
+      WHERE id = ${id} AND EXISTS (
+        SELECT id FROM admin_sessions WHERE id = ${sessionId} AND expires_at > NOW()
+        FOR KEY SHARE
+      )
       RETURNING id
     `;
-
-    if (result.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Dish not found" },
-        { status: 404 }
-      );
+    if (!item) {
+      return (await getActiveSessionId())
+        ? menuError("Dish not found", 404)
+        : menuError("Admin login required", 401);
     }
-
-    return NextResponse.json({
-      success: true,
-      message: "Dish deleted successfully",
-    });
-  } catch (error) {
-    console.error("DELETE error:", error);
-
-    return NextResponse.json(
-      { success: false, error: "Failed to delete dish" },
-      { status: 500 }
-    );
-  }
+    return NextResponse.json({ success: true, message: "Dish deleted successfully" });
+  });
 }
-
- // PUT: Update an existing menu item
-export async function PUT(request: NextRequest) {
-  try {
-    const body = await request.json();
-
-    const id = Number(body.id);
-    const name =
-      typeof body.name === "string" ? body.name.trim() : "";
-    const description =
-      typeof body.description === "string"
-        ? body.description.trim()
-        : "";
-    const price = Number(body.price);
-
-    if (
-      !Number.isSafeInteger(id) ||
-      id <= 0 ||
-      !name ||
-      name.length > 150 ||
-      !description ||
-      body.price === "" ||
-      body.price === null ||
-      body.price === undefined ||
-      !Number.isFinite(price) ||
-      price < 0 ||
-      price > 99999999.99 ||
-      Math.abs(price * 100 - Math.round(price * 100)) > 0.000001
-    ) {
-      return NextResponse.json(
-        { success: false, error: "Enter valid menu details" },
-        { status: 400 }
-      );
-    }
-
-    const sql = getDatabase();
-
-    const result = await sql`
-      UPDATE menu_items
-      SET name = ${name},
-          price = ${price},
-          description = ${description}
-      WHERE id = ${id}
-      RETURNING id, name, price, description
-    `;
-
-    if (result.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Menu item not found" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      item: result[0],
-      message: "Menu item updated successfully",
-    });
-  } catch (error) {
-    console.error("PUT error:", error);
-
-    return NextResponse.json(
-      { success: false, error: "Failed to update dish" },
-      { status: 500 }
-    );
-  }
-}
-
- 
