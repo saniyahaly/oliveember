@@ -64,7 +64,12 @@ export default async function CustomerAccountPage() {
                 {customer.email}
               </p>
             </div>
-
+<Link
+  href="/account/settings"
+  className="mt-6 inline-block rounded-md bg-[#24382C] px-6 py-3 text-sm font-semibold text-white hover:bg-[#3A5844]"
+>
+  Change Password
+</Link>
             <div>
               <p className="text-xs font-bold text-gray-400">
                 ACCOUNT TYPE

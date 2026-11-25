@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import type { FormEvent } from "react";
 
 export default function CustomerLoginPage() {
   const router = useRouter();
@@ -14,36 +15,28 @@ export default function CustomerLoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleLogin(
-    event: React.FormEvent<HTMLFormElement>
-  ) {
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     setLoading(true);
     setError("");
 
     try {
-      const response = await fetch(
-        "/api/customer-auth/login",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            identifier,
-            password,
-          }),
-        }
-      );
+      const response = await fetch("/api/customer-auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          identifier,
+          password,
+        }),
+      });
 
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(
-          data.error || "Unable to log in."
-        );
+        throw new Error(data.error || "Login failed.");
       }
 
       router.replace("/account");
@@ -52,7 +45,7 @@ export default function CustomerLoginPage() {
       setError(
         err instanceof Error
           ? err.message
-          : "Login failed."
+          : "Unable to log in."
       );
     } finally {
       setLoading(false);
@@ -62,14 +55,13 @@ export default function CustomerLoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#F7F5EF] px-5 py-12">
       <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-xl md:p-10">
-        <div className="mb-9 text-center">
+
+        <div className="mb-8 text-center">
           <Link
             href="/"
             className="font-serif text-2xl font-bold text-[#24382C]"
           >
-            OLIVE{" "}
-            <span className="text-[#C9A978]">&</span>{" "}
-            EMBER
+            OLIVE <span className="text-[#C9A978]">&</span> EMBER
           </Link>
 
           <p className="mt-3 text-xs font-semibold tracking-[0.2em] text-[#B99B70]">
@@ -86,22 +78,20 @@ export default function CustomerLoginPage() {
         </div>
 
         {error && (
-          <p
+          <div
             role="alert"
             className="mb-5 rounded-md bg-red-50 p-4 text-sm text-red-700"
           >
             {error}
-          </p>
+          </div>
         )}
 
-        <form
-          onSubmit={handleLogin}
-          className="space-y-6"
-        >
+        <form onSubmit={handleLogin} className="space-y-6">
+
           <div>
             <label
               htmlFor="identifier"
-              className="mb-2 block text-xs font-bold tracking-wider"
+              className="mb-2 block text-xs font-bold text-[#24382C]"
             >
               USERNAME OR EMAIL
             </label>
@@ -109,12 +99,10 @@ export default function CustomerLoginPage() {
             <input
               id="identifier"
               type="text"
-              autoComplete="username"
               required
+              autoComplete="username"
               value={identifier}
-              onChange={(e) =>
-                setIdentifier(e.target.value)
-              }
+              onChange={(e) => setIdentifier(e.target.value)}
               placeholder="Enter username or email"
               className="w-full rounded-md border border-gray-200 bg-gray-50 px-4 py-4 text-sm outline-none focus:border-[#24382C]"
             />
@@ -123,7 +111,7 @@ export default function CustomerLoginPage() {
           <div>
             <label
               htmlFor="password"
-              className="mb-2 block text-xs font-bold tracking-wider"
+              className="mb-2 block text-xs font-bold text-[#24382C]"
             >
               PASSWORD
             </label>
@@ -135,23 +123,15 @@ export default function CustomerLoginPage() {
                 required
                 autoComplete="current-password"
                 value={password}
-                onChange={(e) =>
-                  setPassword(e.target.value)
-                }
-                placeholder="Enter your password"
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
                 className="w-full rounded-md border border-gray-200 bg-gray-50 px-4 py-4 pr-16 text-sm outline-none focus:border-[#24382C]"
               />
 
               <button
                 type="button"
-                aria-label={
-                  showPassword
-                    ? "Hide password"
-                    : "Show password"
-                }
-                onClick={() =>
-                  setShowPassword(!showPassword)
-                }
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword(!showPassword)}
                 className="absolute inset-y-0 right-4 text-xs font-semibold text-[#24382C]"
               >
                 {showPassword ? "Hide" : "Show"}
@@ -166,6 +146,7 @@ export default function CustomerLoginPage() {
           >
             {loading ? "Signing In..." : "Login"}
           </button>
+
         </form>
 
         <div className="mt-8 border-t border-gray-100 pt-6 text-center">
@@ -186,6 +167,7 @@ export default function CustomerLoginPage() {
             ← Back to Restaurant
           </Link>
         </div>
+
       </div>
     </main>
   );
