@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHash, timingSafeEqual } from "node:crypto";
+
 import {
   allowLoginAttempt,
   createSession,
@@ -8,17 +9,16 @@ import {
   SESSION_COOKIE,
   sessionCookieOptions,
 } from "@/lib/auth";
-import { getDatabase } from "@/lib/db";
-import { hashPassword, verifyPassword } from "@/lib/password";
+
 import { isCrossOrigin, readJsonObject } from "@/lib/request";
 
 export const runtime = "nodejs";
 
-function secureCompare(a: string, b: string) {
-  return timingSafeEqual(
-    createHash("sha256").update(a).digest(),
-    createHash("sha256").update(b).digest()
-  );
+function secureCompare(a: string, b: string): boolean {
+  const first = createHash("sha256").update(a).digest();
+  const second = createHash("sha256").update(b).digest();
+
+  return timingSafeEqual(first, second);
 }
 
 export async function POST(request: NextRequest) {
@@ -47,6 +47,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const adminUsername = process.env.ADMIN_USERNAME;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!adminUsername || !adminPassword) {
+      console.error("Admin environment credentials are missing");
+
+      return NextResponse.json(
+        { error: "Administrator login is not configured" },
+        { status: 500 }
+      );
+    }
+
     if (!(await allowLoginAttempt())) {
       return NextResponse.json(
         { error: "Too many login attempts. Try again in a minute." },
@@ -57,87 +69,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const sql = getDatabase();
-    const submittedUsername = body.username.trim();
-    const submittedPassword = body.password;
-
-    let rows = await sql`
-      SELECT id, username, password_hash
-      FROM public.admin_credentials
-      WHERE id = 1
-      LIMIT 1
-    `;
-
-    // Initialise the administrator account only if it
-    // has not been created in the database yet.
-    if (rows.length === 0) {
-      const initialUsername = process.env.ADMIN_USERNAME;
-      const initialPassword = process.env.ADMIN_PASSWORD;
-
-      if (!initialUsername || !initialPassword) {
-        throw new Error(
-          "Initial administrator credentials are not configured."
-        );
-      }
-
-      const usernameMatches = secureCompare(
-        submittedUsername.toLowerCase(),
-        initialUsername.trim().toLowerCase()
-      );
-
-      const passwordMatches = secureCompare(
-        submittedPassword,
-        initialPassword
-      );
-
-      if (!usernameMatches || !passwordMatches) {
-        return NextResponse.json(
-          { error: "Invalid username or password" },
-          { status: 401 }
-        );
-      }
-
-      const passwordHash = await hashPassword(initialPassword);
-
-      await sql`
-        INSERT INTO public.admin_credentials (
-          id,
-          username,
-          password_hash
-        )
-        VALUES (
-          1,
-          ${initialUsername.trim()},
-          ${passwordHash}
-        )
-        ON CONFLICT (id) DO NOTHING
-      `;
-
-      rows = await sql`
-        SELECT id, username, password_hash
-        FROM public.admin_credentials
-        WHERE id = 1
-        LIMIT 1
-      `;
-    }
-
-    if (rows.length !== 1) {
-      throw new Error("Administrator account was not found.");
-    }
-
-    const admin = rows[0];
-
-    const usernameMatches = secureCompare(
-      submittedUsername.toLowerCase(),
-      String(admin.username).toLowerCase()
+    const validUsername = secureCompare(
+      body.username.trim().toLowerCase(),
+      adminUsername.trim().toLowerCase()
     );
 
-    const passwordMatches = await verifyPassword(
-      submittedPassword,
-      String(admin.password_hash)
+    const validPassword = secureCompare(
+      body.password,
+      adminPassword
     );
 
-    if (!usernameMatches || !passwordMatches) {
+    if (!validUsername || !validPassword) {
       return NextResponse.json(
         { error: "Invalid username or password" },
         { status: 401 }
@@ -152,6 +94,7 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
+      message: "Admin login successful",
     });
 
     response.cookies.set(
