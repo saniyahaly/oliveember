@@ -43,6 +43,11 @@ export default function ChangePasswordForm() {
       return;
     }
 
+    if (newPassword === currentPassword) {
+      setError("Choose a different password.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -112,7 +117,7 @@ export default function ChangePasswordForm() {
           autoComplete="current-password"
           placeholder="Enter current password"
           required
-          maxLength={128}
+          maxLength={1024}
         />
       </div>
 
@@ -166,7 +171,7 @@ export default function ChangePasswordForm() {
           onChange={(e) => setShowPasswords(e.target.checked)}
           className="h-4 w-4 accent-[#24382C]"
         />
-        Show passwords
+        {showPasswords ? "Hide passwords" : "Show passwords"}
       </label>
 
       {error && (

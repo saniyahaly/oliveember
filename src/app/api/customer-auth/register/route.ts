@@ -1,6 +1,7 @@
-
+import { allowCustomerAuthAttempt } from "@/lib/customer-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/db";
+import { isCrossOrigin } from "@/lib/request";
 import {
   hashPassword,
   validatePassword,
@@ -10,9 +11,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
-    const origin = request.headers.get("origin");
-
-    if (origin && origin !== request.nextUrl.origin) {
+    if (isCrossOrigin(request)) {
       return NextResponse.json(
         { error: "Invalid request origin" },
         { status: 403 }
@@ -74,6 +73,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!(await allowCustomerAuthAttempt("register", 12))) {
+      return NextResponse.json({ error: "Too many registration attempts. Try again in a minute." },
+        { status: 429, headers: { "Retry-After": "60" } });
+    }
+
     const passwordHash = await hashPassword(password);
     const sql = getDatabase();
 
@@ -116,7 +120,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error("Customer registration failed:", error);
+    console.error("Customer registration failed:");
 
     return NextResponse.json(
       { error: "Unable to create account." },

@@ -57,3 +57,20 @@ export async function getCurrentCustomer(): Promise<Customer | null> {
     email: String(rows[0].email),
   };
 }
+
+export async function allowCustomerAuthAttempt(bucket: string, limit: number) {
+  const sql = getDatabase();
+  const [attempt] = await sql`
+    INSERT INTO public.customer_login_limits (bucket, window_started_at, attempts)
+    VALUES (${bucket}, NOW(), 1)
+    ON CONFLICT (bucket) DO UPDATE
+    SET attempts = CASE WHEN customer_login_limits.window_started_at <= NOW() - INTERVAL '1 minute'
+                        THEN 1 ELSE customer_login_limits.attempts + 1 END,
+        window_started_at = CASE WHEN customer_login_limits.window_started_at <= NOW() - INTERVAL '1 minute'
+                                 THEN NOW() ELSE customer_login_limits.window_started_at END
+    WHERE customer_login_limits.window_started_at <= NOW() - INTERVAL '1 minute'
+       OR customer_login_limits.attempts < ${limit}
+    RETURNING attempts
+  `;
+  return Boolean(attempt);
+}

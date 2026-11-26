@@ -31,20 +31,34 @@ function sessionId(token?: string) {
   return timingSafeEqual(Buffer.from(expected), Buffer.from(signature)) ? id : null;
 }
 
-export async function createSession() {
+type AdminCredential = { id: number; username: string; password_hash: string };
+
+export async function getAdminCredential() {
+  const sql = getDatabase();
+  const accounts = await sql`
+    SELECT id, username, password_hash FROM admin_credentials LIMIT 2
+  `;
+  return accounts.length === 1 ? accounts[0] as AdminCredential : null;
+}
+
+export async function createSession(credential: AdminCredential) {
   const id = randomUUID();
   const token = `${id}.${sign(id).toString("base64url")}`;
   const sql = getDatabase();
 
-  await sql`
-    WITH expired AS (
-      DELETE FROM admin_sessions WHERE expires_at <= NOW()
-    )
-    INSERT INTO admin_sessions (id, expires_at)
-    VALUES (${id}, NOW() + ${SESSION_MAX_AGE} * INTERVAL '1 second')
-  `;
+  const [sessions] = await sql.transaction([
+    sql`
+      INSERT INTO admin_sessions (id, expires_at)
+      SELECT ${id}::uuid, NOW() + ${SESSION_MAX_AGE} * INTERVAL '1 second'
+      FROM admin_credentials
+      WHERE id = ${credential.id} AND password_hash = ${credential.password_hash}
+      FOR SHARE
+      RETURNING id
+    `,
+    sql`DELETE FROM admin_sessions WHERE expires_at <= NOW()`,
+  ], { isolationLevel: "ReadCommitted" });
 
-  return token;
+  return sessions.length === 1 ? token : null;
 }
 
 export async function getActiveSessionId() {
@@ -70,13 +84,13 @@ export async function revokeSession(token?: string) {
   await sql`DELETE FROM admin_sessions WHERE id = ${id}`;
 }
 
-export async function allowLoginAttempt() {
+export async function allowAdminAttempt(bucket: "admin" | "password-change") {
   const sql = getDatabase();
 
   // A shared bucket covers all server instances and cannot be bypassed with spoofed IP headers.
   const attempts = await sql`
     INSERT INTO admin_login_limits (bucket, window_started_at, attempts)
-    VALUES ('admin', NOW(), 1)
+    VALUES (${bucket}, NOW(), 1)
     ON CONFLICT (bucket) DO UPDATE
     SET attempts = CASE
           WHEN admin_login_limits.window_started_at <= NOW() - INTERVAL '1 minute' THEN 1

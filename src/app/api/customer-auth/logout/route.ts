@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/db";
+import { isCrossOrigin } from "@/lib/request";
 import {
   CUSTOMER_COOKIE,
   hashCustomerToken,
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest) {
   try {
     const origin = request.headers.get("origin");
 
-    if (origin !== request.nextUrl.origin) {
+    if (!origin || isCrossOrigin(request)) {
       return NextResponse.json(
         { error: "Invalid request origin." },
         { status: 403 }
@@ -45,8 +46,8 @@ export async function POST(request: NextRequest) {
     });
 
     return response;
-  } catch (error) {
-    console.error("Customer logout failed:", error);
+  } catch {
+    console.error("Customer logout failed:");
 
     return NextResponse.json(
       { error: "Unable to log out right now." },

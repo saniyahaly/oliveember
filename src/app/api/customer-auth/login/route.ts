@@ -1,170 +1,81 @@
-
 import { NextRequest, NextResponse } from "next/server";
-import { createHash, timingSafeEqual } from "node:crypto";
-import { getDatabase } from "@/lib/db";
-import { hashPassword, verifyPassword } from "@/lib/password";
 import {
-  allowLoginAttempt,
-  createSession,
-  revokeSession,
-  SESSION_COOKIE,
-  sessionCookieOptions,
-} from "@/lib/auth";
+  allowCustomerAuthAttempt,
+  CUSTOMER_COOKIE,
+  CUSTOMER_SESSION_DURATION,
+  generateCustomerToken,
+  hashCustomerToken,
+} from "@/lib/customer-auth";
+import { getDatabase } from "@/lib/db";
+import { verifyPassword } from "@/lib/password";
 import { isCrossOrigin, readJsonObject } from "@/lib/request";
 
 export const runtime = "nodejs";
 
-function secureCompare(a: string, b: string): boolean {
-  const first = createHash("sha256").update(a).digest();
-  const second = createHash("sha256").update(b).digest();
-
-  return timingSafeEqual(first, second);
-}
+const dummyHash = `${"0".repeat(32)}:${"0".repeat(128)}`;
 
 export async function POST(request: NextRequest) {
   if (isCrossOrigin(request)) {
-    return NextResponse.json(
-      { error: "Invalid request origin" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
+  }
+
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    return NextResponse.json({ error: "Expected application/json" }, { status: 415 });
   }
 
   const body = await readJsonObject(request);
-
-  if (
-    !body ||
-    typeof body.username !== "string" ||
-    typeof body.password !== "string" ||
-    !body.username.trim() ||
-    !body.password ||
-    body.username.length > 1024 ||
-    body.password.length > 1024
-  ) {
-    return NextResponse.json(
-      { error: "Enter a valid username and password" },
-      { status: 400 }
-    );
+  const identifier = typeof body?.identifier === "string" ? body.identifier.trim() : "";
+  const password = body?.password;
+  if (!identifier || identifier.length > 255 || typeof password !== "string" || !password || password.length > 128) {
+    return NextResponse.json({ error: "Enter your username or email and password" }, { status: 400 });
   }
 
   try {
-    if (!(await allowLoginAttempt())) {
-      return NextResponse.json(
-        {
-          error: "Too many login attempts. Try again in a minute.",
-        },
-        {
-          status: 429,
-          headers: { "Retry-After": "60" },
-        }
-      );
-    }
-
     const sql = getDatabase();
-
-    let admins = await sql`
-      SELECT id, username, password_hash
-      FROM public.admin_credentials
-      WHERE id = 1
-      LIMIT 1
-    `;
-
-    // Initial setup only:
-    // Create the admin credential record when none exists.
-    // The environment password is NEVER used as a
-    // fallback once the database record exists.
-    if (admins.length === 0) {
-      const initialUsername = process.env.ADMIN_USERNAME;
-      const initialPassword = process.env.ADMIN_PASSWORD;
-
-      if (!initialUsername || !initialPassword) {
-        throw new Error("Initial admin credentials are missing");
-      }
-
-      const usernameMatches = secureCompare(
-        body.username.trim().toLowerCase(),
-        initialUsername.trim().toLowerCase()
-      );
-
-      const passwordMatches = secureCompare(
-        body.password,
-        initialPassword
-      );
-
-      if (!usernameMatches || !passwordMatches) {
-        return NextResponse.json(
-          { error: "Invalid username or password" },
-          { status: 401 }
-        );
-      }
-
-      const initialHash = await hashPassword(initialPassword);
-
-      await sql`
-        INSERT INTO public.admin_credentials
-          (id, username, password_hash)
-        VALUES
-          (1, ${initialUsername.trim()}, ${initialHash})
-        ON CONFLICT (id) DO NOTHING
-      `;
-
-      admins = await sql`
-        SELECT id, username, password_hash
-        FROM public.admin_credentials
-        WHERE id = 1
-        LIMIT 1
-      `;
-    }
-
-    if (admins.length === 0) {
-      throw new Error("Admin credentials not initialised");
-    }
-
-    const admin = admins[0];
-
-    const validUsername = secureCompare(
-      body.username.trim().toLowerCase(),
-      String(admin.username).toLowerCase()
-    );
-
-    const validPassword = await verifyPassword(
-      body.password,
-      String(admin.password_hash)
-    );
-
-    if (!validUsername || !validPassword) {
+    if (!(await allowCustomerAuthAttempt("login", 30))) {
       return NextResponse.json(
-        { error: "Invalid username or password" },
-        { status: 401 }
+        { error: "Too many login attempts. Try again in a minute." },
+        { status: 429, headers: { "Retry-After": "60" } }
       );
     }
 
-    // Revoke the previous admin session, if present.
-    await revokeSession(
-      request.cookies.get(SESSION_COOKIE)?.value
-    );
+    const accounts = identifier.includes("@")
+      ? await sql`SELECT id, password_hash FROM public.customer_accounts WHERE lower(email) = lower(${identifier}) LIMIT 2`
+      : await sql`SELECT id, password_hash FROM public.customer_accounts WHERE lower(username) = lower(${identifier}) LIMIT 2`;
+    const account = accounts.length === 1 ? accounts[0] : undefined;
+    const verified = await verifyPassword(password, account?.password_hash ?? dummyHash);
+    if (!verified || !account) {
+      return NextResponse.json({ error: "Invalid username, email, or password" }, { status: 401 });
+    }
 
-    // Preserve the existing admin session mechanism.
-    const token = await createSession();
+    const token = generateCustomerToken();
+    const [session] = await sql`
+      INSERT INTO public.customer_sessions (customer_id, token_hash, expires_at)
+      SELECT id, ${hashCustomerToken(token)}, NOW() + ${CUSTOMER_SESSION_DURATION} * INTERVAL '1 second'
+      FROM public.customer_accounts WHERE id = ${account.id} AND password_hash = ${account.password_hash}
+      FOR SHARE
+      RETURNING id
+    `;
+    if (!session) {
+      return NextResponse.json({ error: "Invalid username, email, or password" }, { status: 401 });
+    }
 
-    const response = NextResponse.json({
-      success: true,
+    const previous = request.cookies.get(CUSTOMER_COOKIE)?.value;
+    if (previous && /^[0-9a-f]{64}$/.test(previous)) {
+      await sql`DELETE FROM public.customer_sessions WHERE token_hash = ${hashCustomerToken(previous)}`;
+    }
+
+    const response = NextResponse.json({ success: true });
+    response.cookies.set(CUSTOMER_COOKIE, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/",
+      maxAge: CUSTOMER_SESSION_DURATION,
     });
-
-    response.cookies.set(
-      SESSION_COOKIE,
-      token,
-      sessionCookieOptions
-    );
-
     return response;
   } catch {
-    console.error(
-      "Admin login failed. Check auth configuration and database schema."
-    );
-
-    return NextResponse.json(
-      { error: "Login failed" },
-      { status: 500 }
-    );
+    console.error("Customer login failed.");
+    return NextResponse.json({ error: "Unable to log in right now" }, { status: 500 });
   }
 }

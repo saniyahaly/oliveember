@@ -39,7 +39,8 @@ export default function CustomerLoginPage() {
         throw new Error(data.error || "Login failed.");
       }
 
-      router.replace("/account");
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(next === "/checkout" || next === "/reservations" ? next : "/account");
       router.refresh();
     } catch (err) {
       setError(
@@ -151,7 +152,7 @@ export default function CustomerLoginPage() {
 
         <div className="mt-8 border-t border-gray-100 pt-6 text-center">
           <p className="text-sm text-gray-500">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <Link
               href="/register"
               className="font-semibold text-[#24382C] underline"
