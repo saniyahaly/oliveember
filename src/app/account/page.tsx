@@ -27,11 +27,6 @@ export default async function CustomerAccountPage() {
           <CustomerLogoutButton />
         </div>
       </header>
-      <nav aria-label="Your account" className="mx-auto flex max-w-6xl flex-wrap gap-5 px-6 py-5 font-semibold text-[#24382C]">
-        <Link href="/reservations" className="underline underline-offset-4">Reserve a table</Link>
-        <Link href="/account/reservations" className="underline underline-offset-4">My reservations</Link>
-        <Link href="/account/orders" className="underline underline-offset-4">My orders</Link>
-      </nav>
 
       <section className="mx-auto max-w-5xl px-6 py-16">
         <p className="mb-3 text-xs font-bold tracking-[0.2em] text-[#B99B70]">

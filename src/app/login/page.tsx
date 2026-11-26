@@ -39,8 +39,7 @@ export default function CustomerLoginPage() {
         throw new Error(data.error || "Login failed.");
       }
 
-      const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next === "/checkout" || next === "/reservations" ? next : "/account");
+      router.replace("/account");
       router.refresh();
     } catch (err) {
       setError(

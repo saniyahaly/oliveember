@@ -4,7 +4,6 @@ import { redirect } from "next/navigation";
 import { isAdminAuthenticated } from "@/lib/auth";
 import LogoutButton from "./LogoutButton";
 import MenuManagement from "./MenuManagement";
-import AdminNavigation from "./AdminNavigation";
 
 export default async function AdminPage() {
   if (!(await isAdminAuthenticated())) {
@@ -45,7 +44,6 @@ export default async function AdminPage() {
         </div>
       </header>
 
-      <AdminNavigation />
       <MenuManagement />
     </main>
   );

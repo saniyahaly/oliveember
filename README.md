@@ -1,5 +1,7 @@
 # Olive & Ember
 
+> Authentication-safe rollback candidate. This build keeps public menu, admin menu management, customer accounts and database-backed authentication available. It pauses restaurant operations screens and APIs. Keep migrations 003 and 004 and all restaurant data in place.
+
 Olive & Ember is a restaurant website built with Next.js App Router, React, TypeScript, Tailwind CSS, and Neon PostgreSQL. Visitors can browse the menu and build a cart without signing in. Customers can reserve tables, place dine-in or takeaway orders, and view their history. Pay at Restaurant is the only payment method. The navbar opens the admin login in a separate tab, and signed-in admins can add, edit, and delete dishes at `/admin`.
 
 ## Local setup

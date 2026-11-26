@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import MenuImage from "./MenuImage";
-import AddToCart from "./cart/AddToCart";
 import { formatPrice, useMenu } from "./useMenu";
 
 export default function Home() {
@@ -16,16 +15,22 @@ export default function Home() {
           OLIVE <span className="text-[#B99B70]">&</span> EMBER
         </a>
 
-        <nav aria-label="Restaurant" className="order-last flex w-full flex-wrap items-center gap-x-5 gap-y-3 text-sm font-medium lg:order-none lg:w-auto">
-          <a href="#home" className="hover:underline">Home</a>
-          <a href="#menu" className="hover:underline">Menu</a>
-          <Link href="/reservations" className="hover:underline">Reservations</Link>
-          <Link href="/cart" className="hover:underline">Cart</Link>
-          <Link href="/login" className="hover:underline">Customer Login</Link>
-          <Link href="/account" className="hover:underline">Account</Link>
+        <nav className="hidden gap-8 text-sm font-medium md:flex">
+          <a href="#home" className="hover:text-[#B99B70]">
+            Home
+          </a>
+          <a href="#menu" className="hover:text-[#B99B70]">
+            Our Menu
+          </a>
         </nav>
 
         <div className="flex items-center gap-3">
+          <a
+            href="#menu"
+            className="hidden bg-[#24382C] px-5 py-3 text-xs font-semibold text-white transition hover:bg-[#3A5844] sm:block"
+          >
+            Explore Menu
+          </a>
           <Link
             href="/admin/login"
             target="_blank"
@@ -151,7 +156,6 @@ export default function Home() {
                   <p className="border-t border-[#E7E4DC] pt-4 text-lg font-semibold text-[#24382C]">
                     Rs. {formatPrice(item.price)}
                   </p>
-                  <AddToCart item={{ id: item.id, name: item.name, price: item.price }} />
                 </div>
               </article>
             ))}
